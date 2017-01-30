@@ -29,11 +29,21 @@ func NewQiniu(conf Config) *Qiniu {
 	}
 }
 
-func (q *Qiniu) Uptoken() string {
+func (q *Qiniu) Uptoken(key string, lifeMinute uint32, secure bool) string {
+	if key != "" {
+		key = ":" + key
+	}
+	uphost := q.conf.UpHost
+	if secure {
+		uphost = q.conf.UpHostSecure
+	}
+	if lifeMinute > q.conf.MaxUpLifeMinute || lifeMinute < 1 {
+		lifeMinute = q.conf.UpLifeMinute
+	}
 	putPolicy := &kodo.PutPolicy{
-		Scope:   q.conf.Bucket,
-		UpHosts: []string{q.conf.UpHost},
-		Expires: uint32(time.Now().Unix()) + q.conf.UpLifeMinute*60,
+		Scope:   q.conf.Bucket + key,
+		UpHosts: []string{uphost},
+		Expires: uint32(time.Now().Unix()) + lifeMinute*60,
 	}
 	return q.client.MakeUptoken(putPolicy)
 }

@@ -1,20 +1,26 @@
 package main
 
 import (
+	"encoding/base64"
+	"fmt"
+	"strings"
+
 	"github.com/empirefox/bogger"
 	"github.com/golang/glog"
-	"github.com/iris-contrib/middleware/cors"
 	"github.com/iris-contrib/middleware/logger"
+	"github.com/iris-contrib/plugin/cors"
 	"github.com/kataras/iris"
 )
 
 func main() {
 	qiniu := bogger.NewQiniu(bogger.Config{
-		Ak:           "ZGhoovpdfp8qNzeQmPFMjW0TWfDLkuJ47szA3pdD",
-		Sk:           "oFpChuMomUSdOdxPQnGlyxH0nyWSuxC0GXoKcwD1",
-		Bucket:       "dogger",
-		UpLifeMinute: 1,
-		UpHost:       "https://up.qbox.me",
+		Ak:              "ZGhoovpdfp8qNzeQmPFMjW0TWfDLkuJ47szA3pdD",
+		Sk:              "oFpChuMomUSdOdxPQnGlyxH0nyWSuxC0GXoKcwD1",
+		Bucket:          "dogger",
+		UpLifeMinute:    1,
+		MaxUpLifeMinute: 10,
+		UpHost:          "http://upload.qiniu.com",
+		UpHostSecure:    "https://up.qbox.me",
 	})
 	s := NewServer(qiniu)
 	s.Listen(":9999")
@@ -29,8 +35,10 @@ func NewServer(qiniu *bogger.Qiniu) *Server {
 	app := iris.New(iris.Configuration{
 		IsDevelopment: true,
 	})
+	app.Plugins.Add(cors.New(cors.Options{
+		AllowedMethods: []string{"GET", "PUT", "POST", "DELETE"},
+	}))
 	app.Use(logger.New())
-	app.Use(cors.Default())
 
 	//	app.OnError(iris.StatusBadRequest, func(ctx *iris.Context) {
 	//		ctx.Write("CUSTOM 404 NOT FOUND ERROR PAGE")
@@ -42,27 +50,44 @@ func NewServer(qiniu *bogger.Qiniu) *Server {
 		qiniu:     qiniu,
 	}
 
-	s.Get("/uptoken", s.GetUptoken)
-	s.Post("/list", s.PostList)
-	s.Post("/delete", s.PostDelete)
+	s.Get("/qiniu/headtoken/:life", s.GetQiniuHeadToken)
+	s.Get("/qiniu/uptoken/:key/:life", s.GetQiniuUptoken)
+	s.Post("/qiniu/:prefix", s.PostQiniuList)
+	s.Delete("/qiniu/:key", s.DeleteQiniu)
 
 	return s
 }
 
-func (s *Server) GetUptoken(ctx *iris.Context) {
+func (s *Server) GetQiniuHeadToken(ctx *iris.Context) {
+	userId := 100
+	life, _ := ctx.ParamInt("life")
+	secure := strings.HasPrefix(ctx.RequestHeader("Origin"), "https://")
 	ctx.JSON(iris.StatusOK, iris.Map{
-		"Uptoken": s.qiniu.Uptoken(),
+		"Uptoken": s.qiniu.Uptoken(fmt.Sprintf("h/%d", userId), uint32(life), secure),
 	})
 }
 
-func (s *Server) PostList(ctx *iris.Context) {
-	var data struct{ Prefix string }
-	if err := ctx.ReadJSON(&data); err != nil {
+func (s *Server) GetQiniuUptoken(ctx *iris.Context) {
+	key, err := base64.URLEncoding.DecodeString(ctx.Param("key"))
+	if err != nil {
+		ctx.EmitError(iris.StatusBadRequest)
+		return
+	}
+	life, _ := ctx.ParamInt("life")
+	secure := strings.HasPrefix(ctx.RequestHeader("Origin"), "https://")
+	ctx.JSON(iris.StatusOK, iris.Map{
+		"Uptoken": s.qiniu.Uptoken(string(key), uint32(life), secure),
+	})
+}
+
+func (s *Server) PostQiniuList(ctx *iris.Context) {
+	prefix, err := base64.URLEncoding.DecodeString(ctx.Param("prefix"))
+	if err != nil {
 		ctx.EmitError(iris.StatusBadRequest)
 		return
 	}
 
-	items, err := s.qiniu.List(data.Prefix)
+	items, err := s.qiniu.List(string(prefix))
 	if err != nil {
 		glog.Errorln(err)
 		ctx.EmitError(iris.StatusInternalServerError)
@@ -70,19 +95,24 @@ func (s *Server) PostList(ctx *iris.Context) {
 	}
 
 	ctx.JSON(iris.StatusOK, items)
+
+	glog.Warningln(string(prefix))
 }
 
-func (s *Server) PostDelete(ctx *iris.Context) {
-	var data struct{ Key string }
-	if err := ctx.ReadJSON(&data); err != nil {
+func (s *Server) DeleteQiniu(ctx *iris.Context) {
+	key, err := base64.URLEncoding.DecodeString(ctx.Param("key"))
+	if err != nil {
 		ctx.EmitError(iris.StatusBadRequest)
 		return
 	}
 
-	err := s.qiniu.Delete(data.Key)
+	err = s.qiniu.Delete(string(key))
 	if err != nil {
 		glog.Errorln(err)
 		ctx.EmitError(iris.StatusInternalServerError)
 		return
 	}
+
+	ctx.JSON(iris.StatusOK, string(key))
+	glog.Warningln(string(key))
 }
