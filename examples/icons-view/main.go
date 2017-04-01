@@ -54,6 +54,7 @@ func NewServer(qiniu *bogger.Qiniu) *Server {
 	s.Get("/qiniu/uptoken/:key/:life", s.GetQiniuUptoken)
 	s.Post("/qiniu/:prefix", s.PostQiniuList)
 	s.Delete("/qiniu/:key", s.DeleteQiniu)
+	s.Post("/echo", s.PostEcho)
 
 	return s
 }
@@ -115,4 +116,14 @@ func (s *Server) DeleteQiniu(ctx *iris.Context) {
 
 	ctx.JSON(iris.StatusOK, string(key))
 	glog.Warningln(string(key))
+}
+
+func (s *Server) PostEcho(ctx *iris.Context) {
+	var data map[string]interface{}
+	err := ctx.ReadJSON(&data)
+	if err != nil {
+		ctx.EmitError(iris.StatusBadRequest)
+		return
+	}
+	ctx.JSON(iris.StatusOK, data)
 }
